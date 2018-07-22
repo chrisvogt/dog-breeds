@@ -1,0 +1,42 @@
+{
+	"name": "dog-breeds",
+	"version": "1.0.0",
+	"description": "Get dog breeds",
+	"license": "MIT",
+	"repository": "chrisvogt/dog-breeds",
+	"author": {
+		"name": "Chris Vogt",
+		"email": "mail@chrisvogt.me",
+		"url": "https://www.chrisvogt.me"
+	},
+	"engines": {
+		"node": ">=6"
+	},
+	"scripts": {
+		"lint": "xo --space=true",
+    "test": "npm run lint && npm run unit",
+    "unit": "nyc ava"
+	},
+	"files": [
+		"dog-breeds.json",
+		"index.js"
+	],
+	"keywords": [
+		"array",
+		"breeds",
+		"canine",
+		"dog breeds",
+		"dogs",
+		"list",
+		"random"
+	],
+	"dependencies": {
+		"unique-random-array": "^1.0.0"
+	},
+	"devDependencies": {
+		"ava": "*",
+		"eslint": "^4.19.1",
+		"nyc": "^12.0.2",
+		"xo": "*"
+	}
+}

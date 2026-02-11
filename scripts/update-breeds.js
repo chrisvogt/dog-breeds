@@ -293,6 +293,7 @@ export async function main({
 }
 
 // Only run when executed directly (not when imported by tests)
+/* c8 ignore next 4 */
 const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMainModule) {
   await main();

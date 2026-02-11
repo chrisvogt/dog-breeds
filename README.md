@@ -1,4 +1,4 @@
-# dog-breeds [![Build Status](https://travis-ci.org/chrisvogt/dog-breeds.svg?branch=master)](https://travis-ci.org/chrisvogt/dog-breeds)
+# dog-breeds
 
 > Get dog breeds
 
@@ -6,29 +6,29 @@ A list of 514 dog breeds, including breed origin and a link to an image of the b
 
 The list is a [JSON file](dog-breeds.json) and can be used anywhere.
 
-
 ## Install
 
 ```
-$ npm install dog-breeds
+npm install dog-breeds
 ```
-
 
 ## Usage
 
 ```js
-const dogBreeds = require('dog-breeds');
+import {random, all} from 'dog-breeds';
 
-dogBreeds.random();
+random();
 /*
 {
   "name": "Catahoula Leopard Dog",
   "origin": "United States",
-  "imageURL": "https://upload.wikimedia.org/wikipedia/commons/7/76/Louisiana_Cataholula_Leopard_Dog_-_Coahoma_Arkansas.JPG"
+  "imageURL": "https://upload.wikimedia.org/wikipedia/commons/7/76/Louisiana_Cataholua_Leopard_Dog_-_Coahoma_Arkansas.JPG"
 }
 */
-```
 
+all;
+// => [{name: 'Affenpinscher', origin: 'Germany, France', imageURL: '...'}, ...]
+```
 
 ## API
 
@@ -43,7 +43,6 @@ Dog breeds in alphabetical order.
 Type: `Function`
 
 Random dog breed.
-
 
 ## License
 

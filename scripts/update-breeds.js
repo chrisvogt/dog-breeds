@@ -15,6 +15,7 @@
  */
 
 import {writeFileSync} from 'node:fs';
+import process from 'node:process';
 import {fileURLToPath} from 'node:url';
 
 const WIKIPEDIA_API = 'https://en.wikipedia.org/w/api.php';
@@ -40,25 +41,13 @@ ORDER BY ?breedLabel
 `;
 
 /**
- * Fetch the wikitext of the "List of dog breeds" page and parse out
- * extant breed names with their Wikipedia article titles.
+ * Parse breed names and article titles from Wikipedia wikitext.
+ * Only includes breeds from the "Extant" section.
  *
+ * @param {string} wikitext - Raw wikitext of the "List of dog breeds" page
  * @returns {Map<string, string>} article title → display name
  */
-async function fetchWikipediaBreedList() {
-  console.log('Fetching Wikipedia "List of dog breeds" page...');
-
-  const url = new URL(WIKIPEDIA_API);
-  url.searchParams.set('action', 'parse');
-  url.searchParams.set('page', 'List_of_dog_breeds');
-  url.searchParams.set('prop', 'wikitext');
-  url.searchParams.set('format', 'json');
-
-  const response = await fetch(url, {headers: {'User-Agent': USER_AGENT}});
-  const data = await response.json();
-  const wikitext = data.parse.wikitext['*'];
-
-  // Only take breeds from the "Extant" section (before "Extinct" section)
+export function parseBreedListWikitext(wikitext) {
   const extinctIndex = wikitext.indexOf('== Extinct');
   const extantText = extinctIndex > 0 ? wikitext.slice(0, extinctIndex) : wikitext;
 
@@ -74,16 +63,111 @@ async function fetchWikipediaBreedList() {
     }
   }
 
-  console.log(`  Found ${breeds.size} extant breeds on Wikipedia.`);
   return breeds;
 }
 
 /**
- * Resolve Wikipedia redirects for a batch of article titles.
+ * Parse Wikidata SPARQL results into a breed data map.
  *
- * @param {string[]} batch - Up to 50 article titles
- * @returns {Map<string, string>} original title → resolved (canonical) title
+ * @param {object[]} bindings - The `results.bindings` array from a SPARQL response
+ * @returns {Map<string, object>} Wikipedia article title → { name, origin, imageURL }
  */
+export function parseWikidataResults(bindings) {
+  const breeds = new Map();
+
+  for (const result of bindings) {
+    const articleUrl = result.article.value;
+    const articleTitle = decodeURIComponent(articleUrl.split('/wiki/')[1]).replaceAll('_', ' ');
+
+    // Wikidata returns http:// URLs; convert to https://
+    const imageURL = (result.image?.value || '').replace('http://', 'https://');
+
+    breeds.set(articleTitle, {
+      name: result.breedLabel.value,
+      origin: result.origins?.value || '',
+      imageURL,
+    });
+  }
+
+  return breeds;
+}
+
+/**
+ * Look up a breed in the Wikidata map, trying the original title first,
+ * then the resolved redirect target.
+ *
+ * @param {string} articleTitle - The Wikipedia article title to look up
+ * @param {Map<string, object>} wikidataBreeds - Wikidata breed data
+ * @param {Map<string, string>} redirectMap - Wikipedia redirect mappings
+ * @returns {object|undefined} The breed data, or undefined if not found
+ */
+export function findInWikidata(articleTitle, wikidataBreeds, redirectMap) {
+  if (wikidataBreeds.has(articleTitle)) {
+    return wikidataBreeds.get(articleTitle);
+  }
+
+  const resolved = redirectMap.get(articleTitle);
+  if (resolved && wikidataBreeds.has(resolved)) {
+    return wikidataBreeds.get(resolved);
+  }
+
+  return undefined;
+}
+
+/**
+ * Combine Wikipedia breed list with Wikidata metadata.
+ *
+ * @param {Map<string, string>} wikipediaBreeds - article title → display name
+ * @param {Map<string, object>} wikidataBreeds - article title → breed data
+ * @param {Map<string, string>} redirectMap - Wikipedia redirect mappings
+ * @returns {object[]} Merged breed array, sorted alphabetically by name
+ */
+export function mergeBreedData(wikipediaBreeds, wikidataBreeds, redirectMap) {
+  const merged = [];
+  const unmatched = [];
+
+  for (const [articleTitle, displayName] of wikipediaBreeds) {
+    const wikidataEntry = findInWikidata(articleTitle, wikidataBreeds, redirectMap);
+
+    if (wikidataEntry) {
+      merged.push({
+        name: displayName,
+        origin: wikidataEntry.origin,
+        imageURL: wikidataEntry.imageURL,
+      });
+    } else {
+      unmatched.push(displayName);
+      merged.push({
+        name: displayName,
+        origin: '',
+        imageURL: '',
+      });
+    }
+  }
+
+  merged.sort((a, b) => a.name.localeCompare(b.name));
+  return merged;
+}
+
+// --- Network functions (not exported; tested indirectly via integration) ---
+
+async function fetchWikipediaBreedList() {
+  console.log('Fetching Wikipedia "List of dog breeds" page...');
+
+  const url = new URL(WIKIPEDIA_API);
+  url.searchParams.set('action', 'parse');
+  url.searchParams.set('page', 'List_of_dog_breeds');
+  url.searchParams.set('prop', 'wikitext');
+  url.searchParams.set('format', 'json');
+
+  const response = await fetch(url, {headers: {'User-Agent': USER_AGENT}});
+  const data = await response.json();
+  const breeds = parseBreedListWikitext(data.parse.wikitext['*']);
+
+  console.log(`  Found ${breeds.size} extant breeds on Wikipedia.`);
+  return breeds;
+}
+
 async function resolveRedirectBatch(batch) {
   const url = new URL(WIKIPEDIA_API);
   url.searchParams.set('action', 'query');
@@ -128,13 +212,6 @@ async function resolveRedirectBatch(batch) {
   return result;
 }
 
-/**
- * Resolve Wikipedia redirects for article titles.
- * The MediaWiki API accepts up to 50 titles per request.
- *
- * @param {string[]} titles - Article titles to resolve
- * @returns {Map<string, string>} original title → resolved (canonical) title
- */
 async function resolveRedirects(titles) {
   const batchSize = 50;
   const batches = [];
@@ -155,11 +232,6 @@ async function resolveRedirects(titles) {
   return redirectMap;
 }
 
-/**
- * Query Wikidata for all dog breeds with origin and image data.
- *
- * @returns {Map<string, object>} Wikipedia article title → breed data
- */
 async function fetchWikidataBreedInfo() {
   console.log('Querying Wikidata for breed origins and images...');
 
@@ -169,117 +241,32 @@ async function fetchWikidataBreedInfo() {
 
   const response = await fetch(url, {headers: {'User-Agent': USER_AGENT}});
   const data = await response.json();
-
-  const breeds = new Map();
-  for (const result of data.results.bindings) {
-    // Extract the article title from the full Wikipedia URL
-    const articleUrl = result.article.value;
-    const articleTitle = decodeURIComponent(articleUrl.split('/wiki/')[1]).replaceAll('_', ' ');
-
-    // Wikidata returns http:// URLs; convert to https://
-    const imageURL = (result.image?.value || '').replace('http://', 'https://');
-
-    breeds.set(articleTitle, {
-      name: result.breedLabel.value,
-      origin: result.origins?.value || '',
-      imageURL,
-    });
-  }
+  const breeds = parseWikidataResults(data.results.bindings);
 
   console.log(`  Found ${breeds.size} breeds with Wikipedia articles in Wikidata.`);
   return breeds;
 }
 
-/**
- * Look up a breed in the Wikidata map, trying the original title first,
- * then the resolved redirect target.
- */
-function findInWikidata(articleTitle, wikidataBreeds, redirectMap) {
-  if (wikidataBreeds.has(articleTitle)) {
-    return wikidataBreeds.get(articleTitle);
-  }
+async function main() {
+  const [wikipediaBreeds, wikidataBreeds] = await Promise.all([
+    fetchWikipediaBreedList(),
+    fetchWikidataBreedInfo(),
+  ]);
 
-  const resolved = redirectMap.get(articleTitle);
-  if (resolved && wikidataBreeds.has(resolved)) {
-    return wikidataBreeds.get(resolved);
-  }
+  console.log('Resolving Wikipedia redirects...');
+  const articleTitles = [...wikipediaBreeds.keys()];
+  const redirectMap = await resolveRedirects(articleTitles);
+  console.log(`  Resolved ${redirectMap.size} redirects.`);
 
-  return undefined;
+  const breeds = mergeBreedData(wikipediaBreeds, wikidataBreeds, redirectMap);
+
+  const outputPath = fileURLToPath(new URL('../dog-breeds.json', import.meta.url));
+  writeFileSync(outputPath, JSON.stringify(breeds, null, 2) + '\n');
+  console.log(`Wrote ${breeds.length} breeds to dog-breeds.json`);
 }
 
-/**
- * Combine Wikipedia breed list with Wikidata metadata.
- */
-function mergeBreedData(wikipediaBreeds, wikidataBreeds, redirectMap) {
-  const merged = [];
-  let matchCount = 0;
-  let missingOrigin = 0;
-  let missingImage = 0;
-  const unmatched = [];
-
-  for (const [articleTitle, displayName] of wikipediaBreeds) {
-    const wikidataEntry = findInWikidata(articleTitle, wikidataBreeds, redirectMap);
-
-    if (wikidataEntry) {
-      matchCount++;
-      const entry = {
-        name: displayName,
-        origin: wikidataEntry.origin,
-        imageURL: wikidataEntry.imageURL,
-      };
-
-      if (!entry.origin) {
-        missingOrigin++;
-      }
-
-      if (!entry.imageURL) {
-        missingImage++;
-      }
-
-      merged.push(entry);
-    } else {
-      unmatched.push(displayName);
-      missingOrigin++;
-      missingImage++;
-      merged.push({
-        name: displayName,
-        origin: '',
-        imageURL: '',
-      });
-    }
-  }
-
-  merged.sort((a, b) => a.name.localeCompare(b.name));
-
-  console.log('\nMerge results:');
-  console.log(`  Total breeds: ${merged.length}`);
-  console.log(`  Matched in Wikidata: ${matchCount}`);
-  console.log(`  Not found in Wikidata: ${unmatched.length}`);
-  console.log(`  Missing origin: ${missingOrigin}`);
-  console.log(`  Missing image: ${missingImage}`);
-
-  if (unmatched.length > 0) {
-    console.log('\nBreeds not found in Wikidata:');
-    for (const name of unmatched.sort()) {
-      console.log(`  - ${name}`);
-    }
-  }
-
-  return merged;
+// Only run when executed directly (not when imported by tests)
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
+if (isMainModule) {
+  await main();
 }
-
-const [wikipediaBreeds, wikidataBreeds] = await Promise.all([
-  fetchWikipediaBreedList(),
-  fetchWikidataBreedInfo(),
-]);
-
-console.log('Resolving Wikipedia redirects...');
-const articleTitles = [...wikipediaBreeds.keys()];
-const redirectMap = await resolveRedirects(articleTitles);
-console.log(`  Resolved ${redirectMap.size} redirects.`);
-
-const breeds = mergeBreedData(wikipediaBreeds, wikidataBreeds, redirectMap);
-
-const outputPath = fileURLToPath(new URL('../dog-breeds.json', import.meta.url));
-writeFileSync(outputPath, JSON.stringify(breeds, null, 2) + '\n');
-console.log(`\nWrote ${breeds.length} breeds to dog-breeds.json`);

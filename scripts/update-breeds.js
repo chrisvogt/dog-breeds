@@ -149,33 +149,41 @@ export function mergeBreedData(wikipediaBreeds, wikidataBreeds, redirectMap) {
   return merged;
 }
 
-// --- Network functions (not exported; tested indirectly via integration) ---
+// --- Network functions ---
 
-async function fetchWikipediaBreedList() {
-  console.log('Fetching Wikipedia "List of dog breeds" page...');
-
+/**
+ * Fetch the extant breed list from the Wikipedia "List of dog breeds" page.
+ *
+ * @param {Function} fetchFunction - Fetch implementation (defaults to global fetch)
+ * @returns {Promise<Map<string, string>>} article title → display name
+ */
+export async function fetchWikipediaBreedList(fetchFunction = fetch) {
   const url = new URL(WIKIPEDIA_API);
   url.searchParams.set('action', 'parse');
   url.searchParams.set('page', 'List_of_dog_breeds');
   url.searchParams.set('prop', 'wikitext');
   url.searchParams.set('format', 'json');
 
-  const response = await fetch(url, {headers: {'User-Agent': USER_AGENT}});
+  const response = await fetchFunction(url, {headers: {'User-Agent': USER_AGENT}});
   const data = await response.json();
-  const breeds = parseBreedListWikitext(data.parse.wikitext['*']);
-
-  console.log(`  Found ${breeds.size} extant breeds on Wikipedia.`);
-  return breeds;
+  return parseBreedListWikitext(data.parse.wikitext['*']);
 }
 
-async function resolveRedirectBatch(batch) {
+/**
+ * Resolve Wikipedia redirects for a batch of article titles.
+ *
+ * @param {string[]} batch - Up to 50 article titles
+ * @param {Function} fetchFunction - Fetch implementation (defaults to global fetch)
+ * @returns {Promise<Map<string, string>>} original title → resolved title
+ */
+export async function resolveRedirectBatch(batch, fetchFunction = fetch) {
   const url = new URL(WIKIPEDIA_API);
   url.searchParams.set('action', 'query');
   url.searchParams.set('titles', batch.join('|'));
   url.searchParams.set('redirects', '1');
   url.searchParams.set('format', 'json');
 
-  const response = await fetch(url, {headers: {'User-Agent': USER_AGENT}});
+  const response = await fetchFunction(url, {headers: {'User-Agent': USER_AGENT}});
   const data = await response.json();
 
   const normalized = new Map();
@@ -212,7 +220,14 @@ async function resolveRedirectBatch(batch) {
   return result;
 }
 
-async function resolveRedirects(titles) {
+/**
+ * Resolve Wikipedia redirects for article titles (batched, 50 per request).
+ *
+ * @param {string[]} titles - Article titles to resolve
+ * @param {Function} fetchFunction - Fetch implementation (defaults to global fetch)
+ * @returns {Promise<Map<string, string>>} original title → resolved title
+ */
+export async function resolveRedirects(titles, fetchFunction = fetch) {
   const batchSize = 50;
   const batches = [];
 
@@ -220,7 +235,9 @@ async function resolveRedirects(titles) {
     batches.push(titles.slice(i, i + batchSize));
   }
 
-  const results = await Promise.all(batches.map(batch => resolveRedirectBatch(batch)));
+  const results = await Promise.all(
+    batches.map(batch => resolveRedirectBatch(batch, fetchFunction)),
+  );
 
   const redirectMap = new Map();
   for (const batchResult of results) {
@@ -232,37 +249,47 @@ async function resolveRedirects(titles) {
   return redirectMap;
 }
 
-async function fetchWikidataBreedInfo() {
-  console.log('Querying Wikidata for breed origins and images...');
-
+/**
+ * Fetch breed origin and image data from Wikidata via SPARQL.
+ *
+ * @param {Function} fetchFunction - Fetch implementation (defaults to global fetch)
+ * @returns {Promise<Map<string, object>>} article title → breed data
+ */
+export async function fetchWikidataBreedInfo(fetchFunction = fetch) {
   const url = new URL(WIKIDATA_SPARQL);
   url.searchParams.set('format', 'json');
   url.searchParams.set('query', SPARQL_QUERY);
 
-  const response = await fetch(url, {headers: {'User-Agent': USER_AGENT}});
+  const response = await fetchFunction(url, {headers: {'User-Agent': USER_AGENT}});
   const data = await response.json();
-  const breeds = parseWikidataResults(data.results.bindings);
-
-  console.log(`  Found ${breeds.size} breeds with Wikipedia articles in Wikidata.`);
-  return breeds;
+  return parseWikidataResults(data.results.bindings);
 }
 
-async function main() {
+/**
+ * Main orchestration: fetch, merge, and write breed data.
+ *
+ * @param {object} options
+ * @param {Function} options.fetchFunction - Fetch implementation
+ * @param {Function} options.writeFunction - File write function
+ * @param {string} options.outputPath - Path to write JSON output
+ * @returns {Promise<object[]>} The merged breed array
+ */
+export async function main({
+  fetchFunction = fetch,
+  writeFunction = writeFileSync,
+  outputPath = fileURLToPath(new URL('../dog-breeds.json', import.meta.url)),
+} = {}) {
   const [wikipediaBreeds, wikidataBreeds] = await Promise.all([
-    fetchWikipediaBreedList(),
-    fetchWikidataBreedInfo(),
+    fetchWikipediaBreedList(fetchFunction),
+    fetchWikidataBreedInfo(fetchFunction),
   ]);
 
-  console.log('Resolving Wikipedia redirects...');
   const articleTitles = [...wikipediaBreeds.keys()];
-  const redirectMap = await resolveRedirects(articleTitles);
-  console.log(`  Resolved ${redirectMap.size} redirects.`);
-
+  const redirectMap = await resolveRedirects(articleTitles, fetchFunction);
   const breeds = mergeBreedData(wikipediaBreeds, wikidataBreeds, redirectMap);
 
-  const outputPath = fileURLToPath(new URL('../dog-breeds.json', import.meta.url));
-  writeFileSync(outputPath, JSON.stringify(breeds, null, 2) + '\n');
-  console.log(`Wrote ${breeds.length} breeds to dog-breeds.json`);
+  writeFunction(outputPath, JSON.stringify(breeds, null, 2) + '\n');
+  return breeds;
 }
 
 // Only run when executed directly (not when imported by tests)

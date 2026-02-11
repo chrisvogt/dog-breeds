@@ -4,6 +4,11 @@ import {
   parseWikidataResults,
   findInWikidata,
   mergeBreedData,
+  fetchWikipediaBreedList,
+  fetchWikidataBreedInfo,
+  resolveRedirectBatch,
+  resolveRedirects,
+  main,
 } from '../scripts/update-breeds.js';
 
 // -- Fixtures --
@@ -49,6 +54,44 @@ const sampleWikidataBindings = [
   },
 ];
 
+/**
+ * Create a mock fetch that returns canned responses based on URL parameters.
+ */
+function createMockFetch() {
+  return async function (url) {
+    const urlString = url.toString();
+
+    // Wikipedia parse API → return wikitext
+    if (urlString.includes('action=parse')) {
+      return {
+        json: async () => ({parse: {wikitext: {'*': sampleWikitext}}}),
+      };
+    }
+
+    // Wikipedia query API → return redirect data
+    if (urlString.includes('action=query')) {
+      return {
+        json: async () => ({
+          query: {
+            normalized: [{from: 'Akita (dog)', to: 'Akita (dog)'}],
+            redirects: [{from: 'Akita (dog)', to: 'Akita (dog breed)'}],
+            pages: {},
+          },
+        }),
+      };
+    }
+
+    // Wikidata SPARQL → return bindings
+    if (urlString.includes('wikidata')) {
+      return {
+        json: async () => ({results: {bindings: sampleWikidataBindings}}),
+      };
+    }
+
+    throw new Error(`Unexpected fetch URL: ${urlString}`);
+  };
+}
+
 // -- parseBreedListWikitext --
 
 test('parseBreedListWikitext extracts breed names from wikitext', t => {
@@ -76,6 +119,12 @@ test('parseBreedListWikitext handles wikitext with no extinct section', t => {
   t.is(breeds.size, 2);
   t.is(breeds.get('Beagle'), 'Beagle');
   t.is(breeds.get('Boxer (dog)'), 'Boxer');
+});
+
+test('parseBreedListWikitext deduplicates repeated article links', t => {
+  const wikitext = '* [[Beagle]]\n* [[Beagle]]';
+  const breeds = parseBreedListWikitext(wikitext);
+  t.is(breeds.size, 1);
 });
 
 // -- parseWikidataResults --
@@ -178,4 +227,79 @@ test('mergeBreedData sorts results alphabetically', t => {
   const names = merged.map(b => b.name);
   const sorted = [...names].sort((a, b) => a.localeCompare(b));
   t.deepEqual(names, sorted);
+});
+
+// -- fetchWikipediaBreedList (with mock fetch) --
+
+test('fetchWikipediaBreedList parses Wikipedia API response', async t => {
+  const mockFetch = createMockFetch();
+  const breeds = await fetchWikipediaBreedList(mockFetch);
+  t.true(breeds instanceof Map);
+  t.is(breeds.size, 4);
+  t.is(breeds.get('Affenpinscher'), 'Affenpinscher');
+});
+
+// -- fetchWikidataBreedInfo (with mock fetch) --
+
+test('fetchWikidataBreedInfo parses Wikidata SPARQL response', async t => {
+  const mockFetch = createMockFetch();
+  const breeds = await fetchWikidataBreedInfo(mockFetch);
+  t.true(breeds instanceof Map);
+  t.is(breeds.size, 4);
+  t.is(breeds.get('Affenpinscher').origin, 'Germany');
+});
+
+// -- resolveRedirectBatch (with mock fetch) --
+
+test('resolveRedirectBatch resolves redirects and normalizations', async t => {
+  const mockFetch = createMockFetch();
+  const result = await resolveRedirectBatch(['Akita (dog)', 'Affenpinscher'], mockFetch);
+  t.true(result instanceof Map);
+  t.is(result.get('Akita (dog)'), 'Akita (dog breed)');
+});
+
+test('resolveRedirectBatch handles response with no redirects', async t => {
+  const noRedirectFetch = async () => ({
+    json: async () => ({query: {pages: {}}}),
+  });
+
+  const result = await resolveRedirectBatch(['Beagle'], noRedirectFetch);
+  t.is(result.size, 0);
+});
+
+// -- resolveRedirects (with mock fetch) --
+
+test('resolveRedirects batches titles and merges results', async t => {
+  const mockFetch = createMockFetch();
+  const titles = ['Akita (dog)', 'Affenpinscher', 'Afghan Hound'];
+  const redirectMap = await resolveRedirects(titles, mockFetch);
+  t.true(redirectMap instanceof Map);
+  t.is(redirectMap.get('Akita (dog)'), 'Akita (dog breed)');
+});
+
+// -- main (with mock fetch + mock write) --
+
+test('main orchestrates fetch, merge, and write', async t => {
+  const mockFetch = createMockFetch();
+  let writtenPath = '';
+  let writtenData = '';
+  const mockWrite = (path, data) => {
+    writtenPath = path;
+    writtenData = data;
+  };
+
+  const breeds = await main({
+    fetchFunction: mockFetch,
+    writeFunction: mockWrite,
+    outputPath: '/tmp/test-dog-breeds.json',
+  });
+
+  t.true(Array.isArray(breeds));
+  t.is(breeds.length, 4);
+  t.is(writtenPath, '/tmp/test-dog-breeds.json');
+  t.truthy(writtenData);
+
+  const parsed = JSON.parse(writtenData);
+  t.is(parsed.length, 4);
+  t.truthy(parsed.find(b => b.name === 'Affenpinscher'));
 });

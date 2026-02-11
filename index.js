@@ -1,7 +1,7 @@
-'use strict';
+import {readFileSync} from 'node:fs';
+import uniqueRandomArray from 'unique-random-array';
 
-const uniqueRandomArray = require('unique-random-array');
-const dogBreeds = require('./dog-breeds.json');
+const dogBreeds = JSON.parse(readFileSync(new URL('dog-breeds.json', import.meta.url), 'utf8'));
 
-module.exports.all = dogBreeds;
-module.exports.random = uniqueRandomArray(dogBreeds);
+export const all = dogBreeds;
+export const random = uniqueRandomArray(dogBreeds);

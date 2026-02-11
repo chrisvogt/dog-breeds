@@ -21,7 +21,8 @@
 	"scripts": {
 		"lint": "xo",
 		"test": "npm run lint && npm run unit",
-		"unit": "c8 ava"
+		"unit": "c8 ava",
+		"update-breeds": "node scripts/update-breeds.js"
 	},
 	"files": [
 		"dog-breeds.json",

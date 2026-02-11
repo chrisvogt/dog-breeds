@@ -2,9 +2,9 @@
 
 > Get dog breeds
 
-A list of 514 dog breeds, including breed origin and a link to an image of the breed on Wikimedia.
+A list of 554 dog breeds, including breed origin and a link to an image of the breed on Wikimedia.
 
-The list is a [JSON file](dog-breeds.json) and can be used anywhere.
+The list is a [JSON file](dog-breeds.json) and can be used anywhere. Data is sourced from [Wikipedia](https://en.wikipedia.org/wiki/List_of_dog_breeds) and [Wikidata](https://www.wikidata.org/).
 
 ## Install
 
@@ -40,11 +40,21 @@ A dog breed object with `name`, `origin`, and `imageURL` properties.
 
 Type: `Array<object>`
 
-All 514 dog breeds in alphabetical order. Each object has the following properties:
+All 554 dog breeds in alphabetical order. Each object has the following properties:
 
 - `name` - The breed name
 - `origin` - The country or region of origin
 - `imageURL` - A link to an image of the breed on Wikimedia
+
+## Updating the data
+
+To refresh the breed list from Wikipedia and Wikidata:
+
+```sh
+npm run update-breeds
+```
+
+This fetches extant breeds from the [Wikipedia list of dog breeds](https://en.wikipedia.org/wiki/List_of_dog_breeds) and enriches each entry with origin and image data from [Wikidata](https://www.wikidata.org/). No additional dependencies are required.
 
 ## Related
 
